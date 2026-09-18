@@ -30,12 +30,12 @@ service cloud.firestore {
     }
     function subtotal(items,i) { return items.size() > i ? items[i].price * items[i].quantity : 0; }
     function orderValid(o,id,uid) {
-      return o.keys().hasAll(['serial','uid','createdAt','status','items','productIds','total'])
-        && o.keys().hasOnly(['serial','uid','createdAt','status','items','productIds','total'])
+      return o.keys().hasAll(['serial','uid','createdAt','status','items','productIds','total','paymentMethod'])
+        && o.keys().hasOnly(['serial','uid','createdAt','status','items','productIds','total','paymentMethod'])
         && id.matches('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
         && o.serial == 'CP-' + uid + '-' + id && o.uid == uid
-        && o.status == 'received' && o.createdAt == request.time
-        && o.items is list && o.items.size() >= 1 && o.items.size() <= 8
+        && o.paymentMethod == 'portpay' && o.status == 'received' && o.createdAt == request.time
+        && o.items is list && o.items.size() >= 1 && o.items.size() <= 6
         && o.productIds is list && o.productIds.size() == o.items.size() && o.productIds.toSet().size() == o.items.size()
         && lineValid(o.items,o.productIds,0) && lineValid(o.items,o.productIds,1)
         && lineValid(o.items,o.productIds,2) && lineValid(o.items,o.productIds,3)
@@ -50,12 +50,27 @@ service cloud.firestore {
       allow update: if admin() && productValid(request.resource.data,id) && request.resource.data.version == resource.data.version + 1;
       allow delete: if false;
     }
+    match /wallets/{uid} {
+      function validWallet(w){return w.keys().hasAll(['balance','lastOrderId','updatedAt']) && w.keys().hasOnly(['balance','lastOrderId','updatedAt']) && w.balance is int && w.balance>=0 && w.balance<=100000000 && w.lastOrderId is string && w.updatedAt==request.time;}
+      function debit(w){return signedIn() && request.auth.uid==uid && request.auth.token.firebase.sign_in_provider!='anonymous'
+        && w.lastOrderId.matches('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+        && !exists(/databases/$(database)/documents/customers/$(uid)/orders/$(w.lastOrderId))
+        && getAfter(/databases/$(database)/documents/customers/$(uid)/orders/$(w.lastOrderId)).data.paymentMethod=='portpay'
+        && w.balance==resource.data.balance-getAfter(/databases/$(database)/documents/customers/$(uid)/orders/$(w.lastOrderId)).data.total;}
+      allow read: if signedIn() && (request.auth.uid==uid || admin());
+      allow create: if admin() && validWallet(request.resource.data) && request.resource.data.lastOrderId=='';
+      allow update: if validWallet(request.resource.data) && ((admin() && request.resource.data.balance>=resource.data.balance && request.resource.data.lastOrderId==resource.data.lastOrderId) || debit(request.resource.data));
+      allow delete: if false;
+    }
     match /config/store { allow read: if true; allow write: if false; }
     match /customers/{uid}/orders/{id} {
       allow read: if signedIn() && request.auth.uid == uid;
-      allow create: if signedIn() && request.auth.uid == uid
+      allow create: if signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous' && request.auth.uid == uid
         && (!exists(/databases/$(database)/documents/config/store) || get(/databases/$(database)/documents/config/store).data.ordersEnabled == true)
-        && orderValid(request.resource.data,id,uid);
+        && orderValid(request.resource.data,id,uid)
+        && getAfter(/databases/$(database)/documents/wallets/$(uid)).data.balance == get(/databases/$(database)/documents/wallets/$(uid)).data.balance-request.resource.data.total
+        && getAfter(/databases/$(database)/documents/wallets/$(uid)).data.lastOrderId == id
+        && getAfter(/databases/$(database)/documents/wallets/$(uid)).data.updatedAt == request.time;
       allow update, delete: if false;
     }
     // 管理画面だけが collectionGroup('orders') で全注文を参照できます。
