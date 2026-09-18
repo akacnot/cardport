@@ -9,7 +9,7 @@ service cloud.firestore {
         && p.keys().hasOnly(['id','name','game','type','price','stock','series','rarity','image','badge','version','updatedAt'])
         && validId(id) && p.id == id && p.name is string && p.name.size() > 0 && p.name.size() <= 100
         && p.game in ['ポケモンカード','遊戯王','ONE PIECE','デュエル・マスターズ','その他のカード']
-        && p.type in ['single','box'] && p.badge in ['NEW','PICK UP','COLLECTION']
+        && p.type in ['single','box'] && p.badge in ['','NEW','PICK UP','COLLECTION']
         && p.price is int && p.price >= 0 && p.price <= 100000000
         && p.stock is int && p.stock >= 0 && p.stock <= 1000000
         && p.series is string && p.series.size() <= 100 && p.rarity is string && p.rarity.size() <= 30
