@@ -6,7 +6,7 @@ service cloud.firestore {
     function validId(id) { return id is string && id.matches('^[a-zA-Z0-9_-]{1,80}$'); }
     function productValid(p,id) {
       return p.keys().hasAll(['id','name','game','type','price','stock','series','rarity','image','badge','version','updatedAt'])
-        && p.keys().hasOnly(['id','name','game','type','price','stock','series','rarity','image','badge','version','updatedAt'])
+        && p.keys().hasOnly(['id','name','game','type','price','stock','series','rarity','image','badge','version','updatedAt','archived','lastStockOrder'])
         && validId(id) && p.id == id && p.name is string && p.name.size() > 0 && p.name.size() <= 100
         && p.game in ['ポケモンカード','遊戯王','ONE PIECE','デュエル・マスターズ','その他のカード']
         && p.type in ['single','box'] && p.badge in ['','NEW','PICK UP','COLLECTION']
@@ -14,18 +14,21 @@ service cloud.firestore {
         && p.stock is int && p.stock >= 0 && p.stock <= 1000000
         && p.series is string && p.series.size() <= 100 && p.rarity is string && p.rarity.size() <= 30
         && p.image is string && p.image.size() <= 2000 && (p.image == '' || p.image.matches('^https://.+'))
+        && p.get('archived',false) is bool && p.get('lastStockOrder','') is string
         && p.version is int && p.version >= 1 && p.updatedAt == request.time;
     }
-    function lineValid(items,ids,i) {
+    function lineValid(items,ids,i,uid,orderId) {
       return items.size() <= i || (
         items[i] is map && items[i].keys().hasAll(['id','name','price','quantity'])
         && items[i].keys().hasOnly(['id','name','price','quantity'])
         && validId(items[i].id) && items[i].id == ids[i]
         && items[i].quantity is int && items[i].quantity >= 1 && items[i].quantity <= 99
         && items[i].price is int && items[i].price >= 0
-        && items[i].name == get(/databases/$(database)/documents/products/$(items[i].id)).data.name
-        && items[i].price == get(/databases/$(database)/documents/products/$(items[i].id)).data.price
-        && items[i].quantity <= get(/databases/$(database)/documents/products/$(items[i].id)).data.stock
+        && items[i].name == getAfter(/databases/$(database)/documents/products/$(items[i].id)).data.name
+        && items[i].price == getAfter(/databases/$(database)/documents/products/$(items[i].id)).data.price
+        && getAfter(/databases/$(database)/documents/products/$(items[i].id)).data.get('archived',false)==false
+        && getAfter(/databases/$(database)/documents/products/$(items[i].id)).data.lastStockOrder==uid+'/'+orderId
+        && getAfter(/databases/$(database)/documents/products/$(items[i].id)).data.updatedAt==request.time
       );
     }
     function subtotal(items,i) { return items.size() > i ? items[i].price * items[i].quantity : 0; }
@@ -37,17 +40,33 @@ service cloud.firestore {
         && o.paymentMethod == 'portpay' && o.status == 'received' && o.createdAt == request.time
         && o.items is list && o.items.size() >= 1 && o.items.size() <= 6
         && o.productIds is list && o.productIds.size() == o.items.size() && o.productIds.toSet().size() == o.items.size()
-        && lineValid(o.items,o.productIds,0) && lineValid(o.items,o.productIds,1)
-        && lineValid(o.items,o.productIds,2) && lineValid(o.items,o.productIds,3)
-        && lineValid(o.items,o.productIds,4) && lineValid(o.items,o.productIds,5)
-        && lineValid(o.items,o.productIds,6) && lineValid(o.items,o.productIds,7)
+        && lineValid(o.items,o.productIds,0,uid,id) && lineValid(o.items,o.productIds,1,uid,id)
+        && lineValid(o.items,o.productIds,2,uid,id) && lineValid(o.items,o.productIds,3,uid,id)
+        && lineValid(o.items,o.productIds,4,uid,id) && lineValid(o.items,o.productIds,5,uid,id)
+        && lineValid(o.items,o.productIds,6,uid,id) && lineValid(o.items,o.productIds,7,uid,id)
         && o.total is int && o.total == subtotal(o.items,0)+subtotal(o.items,1)+subtotal(o.items,2)+subtotal(o.items,3)+subtotal(o.items,4)+subtotal(o.items,5)+subtotal(o.items,6)+subtotal(o.items,7);
+    }
+    function quantityFor(items,id,i){return items.size()>i && items[i].id==id ? items[i].quantity : 0;}
+    function stockPurchase(id){
+      let uid=request.auth.uid;
+      let orderId=getAfter(/databases/$(database)/documents/wallets/$(uid)).data.lastOrderId;
+      let order=getAfter(/databases/$(database)/documents/customers/$(uid)/orders/$(orderId)).data;
+      let quantity=quantityFor(order.items,id,0)+quantityFor(order.items,id,1)+quantityFor(order.items,id,2)+quantityFor(order.items,id,3)+quantityFor(order.items,id,4)+quantityFor(order.items,id,5);
+      return request.auth.token.firebase.sign_in_provider!='anonymous'
+        && !exists(/databases/$(database)/documents/customers/$(uid)/orders/$(orderId))
+        && order.createdAt==request.time && order.paymentMethod=='portpay' && quantity>0
+        && resource.data.get('archived',false)==false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock','version','lastStockOrder','updatedAt'])
+        && request.resource.data.stock is int && request.resource.data.stock>=0
+        && request.resource.data.stock==resource.data.stock-quantity
+        && request.resource.data.version==resource.data.version+1
+        && request.resource.data.lastStockOrder==uid+'/'+orderId && request.resource.data.updatedAt==request.time;
     }
     match /admins/{uid} { allow get: if signedIn() && request.auth.uid == uid; allow list, write: if false; }
     match /products/{id} {
       allow read: if true;
       allow create: if admin() && productValid(request.resource.data,id) && request.resource.data.version == 1;
-      allow update: if admin() && productValid(request.resource.data,id) && request.resource.data.version == resource.data.version + 1;
+      allow update: if (admin() && productValid(request.resource.data,id) && request.resource.data.version == resource.data.version + 1) || (signedIn() && stockPurchase(id));
       allow delete: if false;
     }
     match /wallets/{uid} {

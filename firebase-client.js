@@ -25,7 +25,7 @@ export async function logout(){await signOut(auth)}
 export async function isAdmin(user){return (await getDoc(doc(db,'admins',user.uid))).exists()}
 export async function saveProduct(data){
   const ref=doc(db,'products',data.id);
-  return runTransaction(db,async tx=>{const prior=await tx.get(ref);if((prior.exists()?prior.data().version:0)!==data.version)throw problem('aborted','別の画面で更新されました。編集を開き直してください。');const next={...data,version:data.version+1,updatedAt:serverTimestamp()};tx.set(ref,next);return next});
+  return runTransaction(db,async tx=>{const prior=await tx.get(ref);if((prior.exists()?prior.data().version:0)!==data.version)throw problem('aborted','別の画面で更新されました。編集を開き直してください。');if(prior.exists()&&prior.data().archived)throw problem('failed-precondition','削除済みの商品です。');const next={...(prior.exists()?prior.data():{}),...data,version:data.version+1,updatedAt:serverTimestamp()};tx.set(ref,next);return next});
 }
 export async function placeOrder(data){
   validateCart(data);const user=await guest();const ref=doc(db,'customers',user.uid,'orders',data.requestId);
@@ -38,7 +38,7 @@ export async function placeOrder(data){
     const total=items.reduce((sum,i)=>sum+i.price*i.quantity,0);if(!wallet.exists()||wallet.data().balance<total)throw problem('failed-precondition','PortPayのポイントが不足しています。管理者に付与を依頼してください。');
     tx.update(walletRef,{balance:wallet.data().balance-total,lastOrderId:data.requestId,updatedAt:serverTimestamp()});
     tx.set(ref,{paymentMethod:'portpay',serial:'CP-'+user.uid+'-'+data.requestId,uid:user.uid,createdAt:serverTimestamp(),status:'received',items,productIds:items.map(i=>i.id),total:items.reduce((sum,i)=>sum+i.price*i.quantity,0)});
-    // 個人用：在庫は管理画面で手動更新。注文による自動減算は行いません。
+    for(const item of items){const p=snapshots.find(s=>s.id===item.id).data();tx.update(doc(db,'products',item.id),{stock:p.stock-item.quantity,version:p.version+1,lastStockOrder:user.uid+'/'+data.requestId,updatedAt:serverTimestamp()})}
   });
   return unpack((await getDoc(ref)).data());
 }
@@ -51,4 +51,8 @@ export function watchWallet(uid,next,error){return onSnapshot(doc(db,'wallets',u
 export async function grantPoints(uid,amount){
  uid=uid.trim();if(!/^[a-zA-Z0-9_-]{1,128}$/.test(uid)||!Number.isInteger(amount)||amount<1||amount>1000000)throw Error('利用者IDと1〜1,000,000の整数ポイントを入力してください。');
  const ref=doc(db,'wallets',uid);await runTransaction(db,async tx=>{const old=await tx.get(ref);const balance=(old.exists()?old.data().balance:0)+amount;if(balance>100000000)throw Error('残高の上限を超えています。');tx.set(ref,{balance,lastOrderId:old.exists()?old.data().lastOrderId:'',updatedAt:serverTimestamp()})});
+}
+
+export async function archiveProduct(id,version){
+ const ref=doc(db,'products',id);await runTransaction(db,async tx=>{const old=await tx.get(ref);if(!old.exists()||old.data().archived)return;if(old.data().version!==version)throw problem('aborted','商品が更新されています。一覧から削除をやり直してください。');tx.update(ref,{archived:true,version:version+1,updatedAt:serverTimestamp()})});
 }

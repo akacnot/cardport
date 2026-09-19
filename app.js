@@ -23,9 +23,11 @@ function renderAdmin(){
  const term=$('#admin-search').value.trim().normalize('NFKC').toLocaleLowerCase('ja'),type=$('#admin-type').value;
  const list=PRODUCTS.filter(p=>(type==='all'||p.type===type)&&[p.name,p.series,p.rarity,p.game,p.id].some(v=>String(v??'').normalize('NFKC').toLocaleLowerCase('ja').includes(term)));
  $('#admin-product-count').textContent='（'+list.length+' / '+PRODUCTS.length+'件）';
- $('#admin-products').innerHTML=list.map(p=>`<div class="admin-product"><div><strong>${esc(p.name)}</strong><p>${esc(p.game)} · ${p.type==='box'?'パック・BOX':'シングルカード'} · ${yen(p.price)} · 在庫 ${p.stock}</p></div><button class="add" data-edit="${esc(p.id)}">編集</button></div>`).join('')||'<p class="dialog-intro">条件に一致する登録済み商品はありません。</p>';
+ $('#admin-products').innerHTML=list.map(p=>`<div class="admin-product"><div><strong>${esc(p.name)}</strong><p>${esc(p.game)} · ${p.type==='box'?'パック・BOX':'シングルカード'} · ${yen(p.price)} · 在庫 ${p.stock}</p></div><div class="product-actions"><button class="add" data-edit="${esc(p.id)}">編集</button><button class="remove" data-delete="${esc(p.id)}" aria-label="${esc(p.name)}を削除">削除</button></div></div>`).join('')||'<p class="dialog-intro">条件に一致する登録済み商品はありません。</p>';
  $('#admin-orders').innerHTML=orderList();
 }
+let deletingProduct=null;
+$('#delete-product-confirm').onclick=async()=>{if(!deletingProduct||!adminSignedIn)return;const button=$('#delete-product-confirm');button.disabled=true;try{await api.archiveProduct(deletingProduct.id,deletingProduct.version);if(editor.elements.id.value===deletingProduct.id)resetEditor();$('#delete-product-dialog').close();toast('商品を削除しました。過去の注文は残ります。');deletingProduct=null}catch(e){$('#delete-product-error').textContent=message(e)}finally{button.disabled=false}};
 $('#admin-search').oninput=renderAdmin;
 $('#admin-type').onchange=renderAdmin;
 function openAdmin(){if(!api){toast('Firebaseへの接続を確認してください。');return}if(adminSignedIn){renderAdmin();$('#admin-dialog').showModal()}else{$('#admin-login-error').textContent='';$('#admin-login-dialog').showModal()}}
@@ -83,6 +85,7 @@ document.addEventListener('click',e=>{
   if(b.dataset.add)add(b.dataset.add);if(b.dataset.detail)detail(b.dataset.detail);
   if(b.dataset.game){game=b.dataset.game;document.querySelectorAll('[data-game]').forEach(el=>el.classList.toggle('active',el===b));render()}
   if(b.dataset.minus||b.dataset.remove){if(pending||submitting){toast('送信済み注文の結果を先に確認してください。');return}const id=b.dataset.minus||b.dataset.remove;if(b.dataset.remove||--cart[id]<=0)delete cart[id];save();renderCart()}
+  if(b.dataset.delete&&adminSignedIn){const p=PRODUCTS.find(p=>p.id===b.dataset.delete);if(p){deletingProduct={id:p.id,version:p.version};$('#delete-product-name').textContent=p.name;$('#delete-product-error').textContent='';$('#delete-product-dialog').showModal()}}
   if(b.dataset.edit&&adminSignedIn){const p=PRODUCTS.find(p=>p.id===b.dataset.edit);if(!p)return;for(const field of ['id','version','name','game','type','price','stock','series','rarity','image','badge'])editor.elements[field].value=p[field]??'';$('#editor-title').textContent='カードを編集';$('#editor-error').textContent='';editor.elements.name.focus()}
 });
 $('#search-form').onsubmit=e=>{e.preventDefault();render()};$('#search').oninput=render;
@@ -92,10 +95,10 @@ $('#cart-open').onclick=()=>{renderCart();$('#cart-dialog').showModal()};
 document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()}});d.addEventListener('close',()=>{d.querySelectorAll('input[type=password]').forEach(i=>i.value='')})});
 save();render();showPending();
 try{
-  const client=await import('./firebase-client.js?v=20260918-2');
+  const client=await import('./firebase-client.js?v=20260919-1');
   client.connect({
     auth(next,admin){user=next;adminSignedIn=admin;$('#admin-open').textContent=admin?'管理画面':'管理者ログイン';$('#account-logout').hidden=!next||next.isAnonymous;if(!admin&&$('#admin-dialog').open)$('#admin-dialog').close();startHistory()},
-    products(rows){PRODUCTS.splice(0,PRODUCTS.length,...rows);ready=true;render();renderCart();renderAdmin();$('#connection-status').textContent=ordersEnabled?'商品・在庫は最新の情報です。':'商品をご覧いただけます。現在、注文受付は停止中です。'},
+    products(rows){PRODUCTS.splice(0,PRODUCTS.length,...rows.filter(p=>!p.archived));ready=true;render();renderCart();renderAdmin();$('#connection-status').textContent=ordersEnabled?'商品・在庫は最新の情報です。':'商品をご覧いただけます。現在、注文受付は停止中です。'},
     config(enabled){ordersEnabled=enabled;renderCart();$('#connection-status').textContent=enabled?'注文にはログインが必要です。PortPayポイントでお支払いできます。':'商品をご覧いただけます。現在、注文受付は停止中です。'},
     error:connectionError
   });

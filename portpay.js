@@ -1,4 +1,4 @@
-import * as api from './firebase-client.js?v=20260918-2';
+import * as api from './firebase-client.js?v=20260919-1';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),fmt=n=>n.toLocaleString('ja-JP');
 let user=null,stopWallet,stopHistory,paying=false,pending=null,products=[],enabled=false;
 const requestId=new URLSearchParams(location.search).get('checkout');
