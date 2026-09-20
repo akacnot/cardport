@@ -34,7 +34,8 @@ service cloud.firestore {
     function subtotal(items,i) { return items.size() > i ? items[i].price * items[i].quantity : 0; }
     function orderValid(o,id,uid) {
       return o.keys().hasAll(['serial','uid','createdAt','status','items','productIds','total','paymentMethod'])
-        && o.keys().hasOnly(['serial','uid','createdAt','status','items','productIds','total','paymentMethod'])
+        && o.keys().hasOnly(['serial','uid','createdAt','status','items','productIds','total','paymentMethod','customerName'])
+        && o.get('customerName','') is string && o.get('customerName','').size() <= 50
         && id.matches('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
         && o.serial == 'CP-' + uid + '-' + id && o.uid == uid
         && o.paymentMethod == 'portpay' && o.status == 'received' && o.createdAt == request.time

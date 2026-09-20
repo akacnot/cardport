@@ -37,7 +37,7 @@ export async function placeOrder(data){
     const items=priceItems(data.items,snapshots.filter(s=>s.exists()).map(s=>({...s.data(),id:s.id})));
     const total=items.reduce((sum,i)=>sum+i.price*i.quantity,0);if(!wallet.exists()||wallet.data().balance<total)throw problem('failed-precondition','PortPayのポイントが不足しています。管理者に付与を依頼してください。');
     tx.update(walletRef,{balance:wallet.data().balance-total,lastOrderId:data.requestId,updatedAt:serverTimestamp()});
-    tx.set(ref,{paymentMethod:'portpay',serial:'CP-'+user.uid+'-'+data.requestId,uid:user.uid,createdAt:serverTimestamp(),status:'received',items,productIds:items.map(i=>i.id),total:items.reduce((sum,i)=>sum+i.price*i.quantity,0)});
+    tx.set(ref,{customerName:(user.displayName||'').trim().slice(0,50),paymentMethod:'portpay',serial:'CP-'+user.uid+'-'+data.requestId,uid:user.uid,createdAt:serverTimestamp(),status:'received',items,productIds:items.map(i=>i.id),total:items.reduce((sum,i)=>sum+i.price*i.quantity,0)});
     for(const item of items){const p=snapshots.find(s=>s.id===item.id).data();tx.update(doc(db,'products',item.id),{stock:p.stock-item.quantity,version:p.version+1,lastStockOrder:user.uid+'/'+data.requestId,updatedAt:serverTimestamp()})}
   });
   return unpack((await getDoc(ref)).data());

@@ -16,7 +16,7 @@ function productImage(p,lazy=false){const url=safeImage(p.image);return url?`<im
 const editor=$('#product-form');
 function message(error){const code=String(error?.code||'');if(code.startsWith('auth/'))return 'ログインできませんでした。メールアドレス・パスワード・認証設定を確認してください。';if(code.includes('permission-denied'))return '保存できません。権限・注文受付の設定、最新の価格と在庫を確認してください。';return error?.message||'通信に失敗しました。再試行してください。'}
 function connectionError(error){$('#connection-status').textContent=message(error);$('#connection-status').hidden=false;toast(message(error))}
-function orderList(){return orders.map(o=>`<article class="order-record"><code class="serial">${esc(o.serial)}</code><p>${esc(new Date(o.createdAt).toLocaleString('ja-JP'))} · ${o.paymentMethod==='portpay'?'PortPay支払済み':'受付済み'}</p><ul>${o.items.map(i=>`<li>${esc(i.name)} × ${i.quantity} <b>${yen(i.price*i.quantity)}</b></li>`).join('')}</ul><strong>合計 ${yen(o.total)}（税込）</strong></article>`).join('')||'<p class="dialog-intro">注文はありません。</p>'}
+function orderList(){return orders.map(o=>`<article class="order-record"><p class="order-customer">注文者：<strong>${esc(o.customerName || (o.uid===user?.uid?user.displayName:'') || '名前未保存')}</strong></p><code class="serial">${esc(o.serial)}</code><p>${esc(new Date(o.createdAt).toLocaleString('ja-JP'))} · ${o.paymentMethod==='portpay'?'PortPay支払済み':'受付済み'}</p><ul>${o.items.map(i=>`<li>${esc(i.name)} × ${i.quantity} <b>${yen(i.price*i.quantity)}</b></li>`).join('')}</ul><strong>合計 ${yen(o.total)}（税込）</strong></article>`).join('')||'<p class="dialog-intro">注文はありません。</p>'}
 function resetEditor(){editor.reset();editor.elements.id.value='';editor.elements.version.value='0';$('#editor-title').textContent='カードを追加';$('#editor-error').textContent=''}
 function renderAdmin(){
  if(!adminSignedIn)return;
@@ -95,7 +95,7 @@ $('#cart-open').onclick=()=>{renderCart();$('#cart-dialog').showModal()};
 document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()}});d.addEventListener('close',()=>{d.querySelectorAll('input[type=password]').forEach(i=>i.value='')})});
 save();render();showPending();
 try{
-  const client=await import('./firebase-client.js?v=20260919-1');
+  const client=await import('./firebase-client.js?v=20260920-1');
   client.connect({
     auth(next,admin){user=next;adminSignedIn=admin;$('#admin-open').textContent=admin?'管理画面':'管理者ログイン';$('#account-logout').hidden=!next||next.isAnonymous;if(!admin&&$('#admin-dialog').open)$('#admin-dialog').close();startHistory()},
     products(rows){PRODUCTS.splice(0,PRODUCTS.length,...rows.filter(p=>!p.archived));ready=true;render();renderCart();renderAdmin();$('#connection-status').textContent=ordersEnabled?'商品・在庫は最新の情報です。':'商品をご覧いただけます。現在、注文受付は停止中です。'},
