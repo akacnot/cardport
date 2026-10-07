@@ -66,7 +66,7 @@ async function doLogin(form,adminOnly){
 }
 async function doLogout(){if(pending){toast('送信済み注文の結果を先に確認してください。');return}try{await api.logout();$('#admin-dialog').close();toast('ログアウトしました')}catch(e){toast(message(e))}}
 $('#register-open').onclick=()=>{$('#login-dialog').close();$('#register-message').textContent='';$('#register-dialog').showModal()};
-$('#register-form').onsubmit=async e=>{e.preventDefault();if(!api)return;const form=e.target,button=form.querySelector('button[type=submit]');button.disabled=true;$('#register-message').textContent='登録中…';try{const d=new FormData(form);await api.register(d.get('name'),d.get('email'),d.get('password'));form.reset();$('#register-dialog').close();toast('登録しました。注文できます。')}catch(error){$('#register-message').textContent=error.code==='auth/email-already-in-use'?'このメールアドレスは登録済みです。ログインしてください。':message(error)}finally{button.disabled=false}};
+$('#register-form').onsubmit=async e=>{e.preventDefault();if(!api)return;const form=e.target,button=form.querySelector('button[type=submit]');button.disabled=true;$('#register-message').textContent='登録中…';try{const d=new FormData(form);if($('#register-kind').value==='guest')await api.registerGuest(d.get('name'),d.get('guestCode'),d.get('password'));else await api.register(d.get('name'),d.get('email'),d.get('password'));form.reset();$('#register-dialog').close();toast('登録しました。注文できます。')}catch(error){$('#register-message').textContent=error.code==='auth/email-already-in-use'?'このメールアドレスは登録済みです。ログインしてください。':message(error)}finally{button.disabled=false}};
 $('#login-form').onsubmit=e=>{e.preventDefault();doLogin(e.target,false)};
 $('#admin-login-form').onsubmit=e=>{e.preventDefault();doLogin(e.target,true)};
 $('#admin-logout').onclick=doLogout;$('#account-logout').onclick=doLogout;
@@ -95,7 +95,7 @@ $('#cart-open').onclick=()=>{renderCart();$('#cart-dialog').showModal()};
 document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()}});d.addEventListener('close',()=>{d.querySelectorAll('input[type=password]').forEach(i=>i.value='')})});
 save();render();showPending();
 try{
-  const client=await import('./firebase-client.js?v=20260920-1');
+  const client=await import('./firebase-client.js?v=20261007-1');
   client.connect({
     auth(next,admin){user=next;adminSignedIn=admin;$('#admin-open').textContent=admin?'管理画面':'管理者ログイン';$('#account-logout').hidden=!next||next.isAnonymous;if(!admin&&$('#admin-dialog').open)$('#admin-dialog').close();startHistory()},
     products(rows){PRODUCTS.splice(0,PRODUCTS.length,...rows.filter(p=>!p.archived));ready=true;render();renderCart();renderAdmin();$('#connection-status').textContent=ordersEnabled?'商品・在庫は最新の情報です。':'商品をご覧いただけます。現在、注文受付は停止中です。'},
@@ -105,3 +105,6 @@ try{
   api=client;
 }catch(e){connectionError(e);$('#checkout').disabled=true}
 
+
+$('#register-kind').onchange=()=>{const isGuest=$('#register-kind').value==='guest',form=$('#register-form');$('#guest-code-label').hidden=!isGuest;form.elements.guestCode.disabled=!isGuest;form.elements.guestCode.required=isGuest;$('#register-email-label').hidden=isGuest;form.elements.email.disabled=isGuest;form.elements.email.required=!isGuest;$('#guest-signup-help').hidden=!isGuest;$('#register-message').textContent=''};
+$('#guest-code-show').onclick=async()=>{if(!api||!adminSignedIn)return;const button=$('#guest-code-show');button.disabled=true;$('#guest-code-status').textContent='確認中…';try{$('#guest-code-value').textContent=await api.getGuestSignupCode();$('#guest-code-status').textContent='このコードは複数人のゲスト登録に使えます。'}catch(e){$('#guest-code-status').textContent=message(e)}finally{button.disabled=false}};

@@ -3,6 +3,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function admin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function guestAllowed() { return !request.auth.token.get('email','').matches('.*@guest[.]cardport[.]invalid$') || exists(/databases/$(database)/documents/guestMembers/$(request.auth.uid)); }
     function validId(id) { return id is string && id.matches('^[a-zA-Z0-9_-]{1,80}$'); }
     function productValid(p,id) {
       return p.keys().hasAll(['id','name','game','type','price','stock','series','rarity','image','badge','version','updatedAt'])
@@ -82,12 +83,42 @@ service cloud.firestore {
       allow update: if validWallet(request.resource.data) && ((admin() && request.resource.data.balance>=resource.data.balance && request.resource.data.lastOrderId==resource.data.lastOrderId) || debit(request.resource.data));
       allow delete: if false;
     }
+    match /guestInvites/{hash} {
+      allow get: if resource.data.enabled == true || admin();
+      allow list: if false;
+      allow create, update: if admin() && hash.matches('^[a-f0-9]{64}$')
+        && request.resource.data.keys().hasAll(['enabled','createdAt']) && request.resource.data.keys().hasOnly(['enabled','createdAt'])
+        && request.resource.data.enabled is bool;
+      allow delete: if false;
+    }
+    match /config/guestSignup {
+      allow get: if admin();
+      allow create, update: if admin() && request.resource.data.keys().hasAll(['code','codeHash','updatedAt'])
+        && request.resource.data.keys().hasOnly(['code','codeHash','updatedAt'])
+        && request.resource.data.code is string && request.resource.data.code.matches('^CPG-[A-F0-9]{32}$')
+        && request.resource.data.codeHash is string && request.resource.data.codeHash.matches('^[a-f0-9]{64}$')
+        && request.resource.data.updatedAt == request.time;
+      allow list, delete: if false;
+    }
+    match /guestMembers/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || admin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.auth.token.get('email','').matches('^[a-f0-9]{64}@guest[.]cardport[.]invalid$')
+        && request.resource.data.keys().hasAll(['name','email','inviteId','createdAt'])
+        && request.resource.data.keys().hasOnly(['name','email','inviteId','createdAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 50
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.inviteId is string && request.resource.data.inviteId.matches('^[a-f0-9]{64}$')
+        && get(/databases/$(database)/documents/guestInvites/$(request.resource.data.inviteId)).data.enabled == true
+        && request.resource.data.createdAt == request.time;
+      allow list, update, delete: if false;
+    }
     match /config/store { allow read: if true; allow write: if false; }
     match /customers/{uid}/orders/{id} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow create: if signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous' && request.auth.uid == uid
         && (!exists(/databases/$(database)/documents/config/store) || get(/databases/$(database)/documents/config/store).data.ordersEnabled == true)
-        && orderValid(request.resource.data,id,uid)
+        && guestAllowed() && orderValid(request.resource.data,id,uid)
         && getAfter(/databases/$(database)/documents/wallets/$(uid)).data.balance == get(/databases/$(database)/documents/wallets/$(uid)).data.balance-request.resource.data.total
         && getAfter(/databases/$(database)/documents/wallets/$(uid)).data.lastOrderId == id
         && getAfter(/databases/$(database)/documents/wallets/$(uid)).data.updatedAt == request.time;

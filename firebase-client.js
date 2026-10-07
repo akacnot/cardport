@@ -1,6 +1,7 @@
+import {guestName,guestEmail,guestCode,sha256} from './guest-utils.js?v=20261007-1';
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
 import {getAuth,onAuthStateChanged,createUserWithEmailAndPassword,EmailAuthProvider,linkWithCredential,updateProfile,signInWithEmailAndPassword,signOut} from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
-import {getFirestore,collection,collectionGroup,query,orderBy,limit,onSnapshot,getDoc,doc,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+import {getFirestore,collection,collectionGroup,query,orderBy,limit,onSnapshot,getDoc,setDoc,doc,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 import {firebaseConfig} from './firebase-config.js';
 import {validateCart,priceItems,matchesOrder,problem} from './order-utils.js';
 let auth,db;
@@ -12,15 +13,15 @@ export function connect(callbacks){
   onSnapshot(query(collection(db,'products'),orderBy('name'),limit(500)),s=>callbacks.products(s.docs.map(d=>({...d.data(),id:d.id}))),callbacks.error);
   onSnapshot(doc(db,'config','store'),s=>callbacks.config(!s.exists()||s.data().ordersEnabled===true),callbacks.error);
 }
-export async function guest(){await auth.authStateReady();if(!auth.currentUser||auth.currentUser.isAnonymous)throw problem('auth/login-required','注文するにはログインしてください。');return auth.currentUser}
+export async function guest(){await auth.authStateReady();if(!auth.currentUser||auth.currentUser.isAnonymous)throw problem('auth/login-required','注文するにはログインしてください。');if(auth.currentUser.email?.endsWith('@guest.cardport.invalid')&&!(await getDoc(doc(db,'guestMembers',auth.currentUser.uid))).exists())throw problem('failed-precondition','ゲスト登録が未完了です。新規登録から同じ名前・パスワードとコードで登録を完了してください。');return auth.currentUser}
 export async function register(name,email,password){
- name=name.trim();email=email.trim();if(!name||name.length>50)throw Error('名前は1〜50文字で入力してください。');
+ name=name.trim();email=email.trim();if(email.toLowerCase().endsWith('@guest.cardport.invalid'))throw Error('ゲスト会員の登録画面を使用してください。');if(!name||name.length>50)throw Error('名前は1〜50文字で入力してください。');
  await auth.authStateReady();
  const result=auth.currentUser?.isAnonymous?await linkWithCredential(auth.currentUser,EmailAuthProvider.credential(email,password)):await createUserWithEmailAndPassword(auth,email,password);
  try{await updateProfile(result.user,{displayName:name})}catch{throw Error('アカウントは作成されましたが名前を保存できませんでした。ログインして再設定してください。')}
  return result.user;
 }
-export async function login(email,password){return (await signInWithEmailAndPassword(auth,email,password)).user}
+export async function login(identity,password){const email=identity.includes('@')?identity.trim():await guestEmail(identity);return (await signInWithEmailAndPassword(auth,email,password)).user}
 export async function logout(){await signOut(auth)}
 export async function isAdmin(user){return (await getDoc(doc(db,'admins',user.uid))).exists()}
 export async function saveProduct(data){
@@ -55,4 +56,23 @@ export async function grantPoints(uid,amount){
 
 export async function archiveProduct(id,version){
  const ref=doc(db,'products',id);await runTransaction(db,async tx=>{const old=await tx.get(ref);if(!old.exists()||old.data().archived)return;if(old.data().version!==version)throw problem('aborted','商品が更新されています。一覧から削除をやり直してください。');tx.update(ref,{archived:true,version:version+1,updatedAt:serverTimestamp()})});
+}
+
+export async function registerGuest(name,code,password){
+ name=guestName(name);code=guestCode(code);if(password.length<8)throw Error('パスワードは8文字以上で設定してください。');
+ const inviteId=await sha256(code);let invite;
+ try{invite=await getDoc(doc(db,'guestInvites',inviteId))}catch(e){if(e.code==='permission-denied')throw Error('ゲスト作成用コードが違うか、無効になっています。');throw e}
+ if(!invite.exists()||invite.data().enabled!==true)throw Error('ゲスト作成用コードが違うか、無効になっています。');
+ await auth.authStateReady();const email=await guestEmail(name);let result;
+ try{result=auth.currentUser?.isAnonymous?await linkWithCredential(auth.currentUser,EmailAuthProvider.credential(email,password)):await createUserWithEmailAndPassword(auth,email,password)}
+ catch(e){if(e.code!=='auth/email-already-in-use'&&e.code!=='auth/credential-already-in-use')throw e;try{result=await signInWithEmailAndPassword(auth,email,password)}catch{throw Error('この名前は使用中です。別の名前を選ぶか、登録済みのパスワードでログインしてください。')}}
+ const ref=doc(db,'guestMembers',result.user.uid),old=await getDoc(ref);
+ if(!old.exists()){await updateProfile(result.user,{displayName:name});await setDoc(ref,{name,email,inviteId,createdAt:serverTimestamp()})}
+ else if(!result.user.displayName){await updateProfile(result.user,{displayName:old.data().name})}
+ return result.user;
+}
+export async function getGuestSignupCode(){
+ await auth.authStateReady();if(!auth.currentUser||!(await isAdmin(auth.currentUser)))throw Error('管理者のみ確認できます。');
+ const ref=doc(db,'config','guestSignup');const bytes=crypto.getRandomValues(new Uint8Array(16));const code='CPG-'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('').toUpperCase(),codeHash=await sha256(code);
+ return runTransaction(db,async tx=>{const old=await tx.get(ref);if(old.exists())return old.data().code;tx.set(doc(db,'guestInvites',codeHash),{enabled:true,createdAt:serverTimestamp()});tx.set(ref,{code,codeHash,updatedAt:serverTimestamp()});return code});
 }
